@@ -16,6 +16,10 @@ logger = logging.getLogger('taskserver')
 
 TASK_MODULE = getattr(settings, 'TASK_MODULE', None)
 
+# minimal time to sleep until next run
+# in the case when elapsed time is greater than timedelta
+MINIMAL_SLEEP_TIME = getattr(settings, 'MINIMAL_SLEEP_TIME', 0.1)
+
 
 class TaskServer(StatelessServer):
 
@@ -97,13 +101,22 @@ class TaskServer(StatelessServer):
                 sleep_seconds = croniter(schedule).next() - time.time()
             logger.info(f'{value["type"]} next run in {sleep_seconds}s')
             task_kwargs['sleep_time'] = sleep_seconds
+
+            t_start = time.perf_counter()
+
             try:
                 await task_fn(value["type"], **task_kwargs)
             except Exception as e:
                 # raise Exception(f'Error occurred while running {value["type"]}. Error was {e}')
                 logger.error(f'Error occurred while running {value["type"]}. Error was: {e}')
+            finally:
+                t_end = time.perf_counter()
+                time_elapsed = round((t_end - t_start) * 1000) / 1000
+
+            next_run = max(sleep_seconds - time_elapsed, MINIMAL_SLEEP_TIME)
+            logger.info(f"{value['type']} COMPLETED in: {time_elapsed} c. Next run in {next_run} s")
             # await self.channel_layer.send(
             #     key, {"type": value["type"], "message": value["message"]}
             # )
 
-            await asyncio.sleep(sleep_seconds)
+            await asyncio.sleep(next_run)
